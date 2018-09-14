@@ -47,7 +47,8 @@ spark-hosts:
         password: "{{root_salt_password}}"
         sudo_privilege: True
         auto_generate_etc_host_list: False
-
+      
+      
 ##实例2
     - name: "安装不同主机间用户{{spark_username}}之间免密码登陆 passwordless-ssh-login"
       include_role:
