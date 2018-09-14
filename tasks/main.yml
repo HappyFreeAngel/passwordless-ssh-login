@@ -1,0 +1,134 @@
+    #version:1.2.1 2018.08.07 22:57   2018.08.24  修改了user_ssh_dir 一经定义后面没有被修改的错误.
+    # tasks file for passwordless-ssh-login
+    # 参数传入演示   2个参数
+    #user_host_list=?
+    #username=? centos,
+    #password=? yourpassword,
+    #auto_generate_etc_host_list=? False
+    #sudo_privilege? True 显示传入
+    - set_fact: passwordless_ssh_login_deploy_start_timestamp="{{lookup('pipe','date \"+%Y-%m-%d %H:%M:%S\"')}}"
+
+    - set_fact: max_wait_time_in_seconds=300
+      when: max_wait_time_in_seconds is undefined
+
+    - set_fact: username="root"
+      when: username is undefined
+
+    - set_fact: password="$1xreu3ze.m5A", #yourpassword 的加密形式,可以用这个计算出来: python -c 'import crypt; print crypt.crypt("yourpassword", "$1$SomeSalt$")'
+      when: password is undefined
+
+    - set_fact: auto_generate_etc_host_list = False
+      when: auto_generate_etc_host_list is undefined
+
+    - set_fact: user_ssh_dir="/home/{{username}}/.ssh"
+      when: username != 'root'
+      
+    - set_fact: user_ssh_dir="/root/.ssh"
+      when: username == 'root'
+
+    - name: add user {{ username }} on vm
+      user:
+        name: "{{username}}"
+        password: "{{password}}"
+        state: present
+        append: yes
+        generate_ssh_key: yes
+        ssh_key_bits: 2048
+        ssh_key_file: .ssh/id_rsa
+      when: username != 'root'
+
+    - stat: path=/root/.ssh/id_rsa
+      register: temp_file_path
+      ignore_errors: yes
+
+    - name: "Create a 2048-bit SSH key for user root in /root/.ssh/id_rsa 如果尚未存在的话."
+      user:
+        name: root
+        generate_ssh_key: yes
+        ssh_key_bits: 2048
+        ssh_key_file: .ssh/id_rsa
+      when: username == 'root' and  temp_file_path.stat.exists == False
+
+    #添加一个sudo user {{username}}
+    - name: Make sure we have a 'wheel' group 当用户不是root时才创建
+      group:
+        name: wheel
+        state: present
+      when: username != 'root'
+
+    - name: Allow 'wheel' group to have passwordless sudo
+      lineinfile:
+        dest: /etc/sudoers
+        state: present
+        regexp: '^%wheel'
+        line: '%wheel ALL=(ALL) NOPASSWD: ALL'
+      when: username != 'root'
+
+    - set_fact: sudo_privilege = True
+      when: sudo_privilege is undefined
+
+    - name: "Add sudoers users to wheel group  for {{username}}"
+      user: name={{username}} groups=wheel append=yes state=present createhome=yes
+      when: sudo_privilege == True and username != 'root'
+
+    - include_role:
+        name: etc-hosts-with-hostlist
+      vars:
+        etc_host_list: "{{ user_host_list }}"
+      when: auto_generate_etc_host_list == True
+
+    #to do 每次运行目录都不一样，确保多个ansible playbook并行运行，目录不会冲突,运行期间所有hosts 共享这一目录.
+    - set_fact: random_pub_key_file_path={{playbook_dir}}/tmp/remote_host_pub_key_store_{{ 200000000 | random }}_{{ 200000000 | random }}
+      when: random_pub_key_file_path is not defined
+      run_once: yes
+
+    - name: "创建临时目录{{playbook_dir}}/tmp 如果不存在的话."
+      file: path={{random_pub_key_file_path}}  state=directory mode=0766
+      delegate_to: 127.0.0.1
+
+     #注意 fetch  dest={{playbook_dir}}/tmp/id_rsa_{{item.name}}/ 后面的/不是可有可无的. 有/表示使用这个目录,没有/表示要把/abc.host/home/user/添加在后面.
+    - name: "username={{username}}取回每个主机上的公匙 fetch id_rsa.pub 到 ansible running host"
+      fetch: src={{user_ssh_dir}}/id_rsa.pub   dest={{random_pub_key_file_path}}/id_rsa_{{item.name}}/  flat=yes fail_on_missing=yes  #mode=766  group={{username}} owner={{username}} 这个本地机器上可能没有这个帐号.
+      delegate_to: "{{ item.name }}"
+      with_items:  "{{ user_host_list }}"
+      ignore_errors: yes
+      retries: 3
+      when: inventory_hostname == user_host_list[0].name
+
+    #如果这个主机名称不一样,怎么取? todo 当 phoenix_host_list: "{{hostdict['hadoop-namenode-hosts']}}+{{hostdict['hadoop-datanode-hosts']}}  运行的hosts不在host_list时会出错，为什么
+    - name: "username={{username}}修改authorized_keys {{ inventory_hostname }},合并所有{{ user_host_list }}的id_rsa.pub 到ansible所在机器目录{{random_pub_key_file_path}}/authorized_keys"
+      shell:  cat  {{random_pub_key_file_path}}/id_rsa_{{item.name}}/id_rsa.pub >> {{random_pub_key_file_path}}/authorized_keys
+      delegate_to: 127.0.0.1  #localhost
+      with_items:  "{{ user_host_list }}"
+      run_once: yes
+      #when: inventory_hostname == item.name  #??user_host_list[0]
+
+    - name: "username={{username}}分发给每个机器 authorized_keys {{ inventory_hostname }}"
+      copy: src={{random_pub_key_file_path}}/authorized_keys   dest={{user_ssh_dir}}/authorized_keys
+      delegate_to: "{{ inventory_hostname }}"
+      with_items:  "{{user_host_list}}"
+      
+
+    - name: "username={{username}}自动生成各个免密码登陆主机的域名  {{ inventory_hostname }}  {{user_ssh_dir}}/known_hosts on {{user_host_list[0].name}}"
+      shell: ssh-keyscan {{ item.name }} >>{{user_ssh_dir}}/known_hosts; chown {{username}}:{{username}}  {{user_ssh_dir}}/known_hosts ; chmod 644 {{user_ssh_dir}}/known_hosts
+      delegate_to: "{{ inventory_hostname }}"
+      with_items:  "{{user_host_list}}"
+
+    - name: username={{username}}自动生成各个免密码登陆主机的域名简称  {{ inventory_hostname }}  {{user_ssh_dir}}/known_hosts on "{{user_host_list[0].name}}"
+      shell: ssh-keyscan {{ item.name.split('.')[0] }} >>{{user_ssh_dir}}/known_hosts; chown {{username}}:{{username}}  {{user_ssh_dir}}/known_hosts ; chmod 644 {{user_ssh_dir}}/known_hosts
+      delegate_to: "{{ inventory_hostname }}"
+      with_items:  "{{user_host_list}}"
+
+    - name: username={{username}}自动生成各个免密码登陆主机的IP  {{ inventory_hostname }}  {{user_ssh_dir}}/known_hosts on "{{user_host_list[0].name}}"
+      shell: ssh-keyscan {{ item.ip }} >>{{user_ssh_dir}}/known_hosts; chown {{username}}:{{username}}  {{user_ssh_dir}}/known_hosts ; chmod 644 {{user_ssh_dir}}/known_hosts
+      delegate_to: "{{ inventory_hostname }}"
+      with_items:  "{{user_host_list}}"
+
+    - name: "username={{username}}清理垃圾, user_ssh_dir={{user_ssh_dir}}保护环境干净,确保不影响其他账号的运行."
+      file: path={{random_pub_key_file_path}}/ state=absent
+      delegate_to: 127.0.0.1  #localhost
+
+    - set_fact: passwordless_ssh_login_deploy_stop_timestamp="{{lookup('pipe','date \"+%Y-%m-%d %H:%M:%S\"')}}"
+
+    - name: "角色:passwordless_ssh_login安装执行共耗时{{( (passwordless_ssh_login_deploy_stop_timestamp | to_datetime) - (passwordless_ssh_login_deploy_start_timestamp | to_datetime)).total_seconds()}}秒."
+      debug: msg=" "

@@ -49,7 +49,6 @@ spark-hosts:
         auto_generate_etc_host_list: False
 
 ##实例2
-    #下面这个操作会创建{{spark_username}}帐号,下面的group, owner 等创建文件夹时会用到.
     - name: "安装不同主机间用户{{spark_username}}之间免密码登陆 passwordless-ssh-login"
       include_role:
          name: passwordless-ssh-login
