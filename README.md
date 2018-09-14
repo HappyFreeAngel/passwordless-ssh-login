@@ -36,32 +36,33 @@ spark-hosts:
   - name: "spark-node5.cityworks.cn"
   
 
-##实例1
-
-    - name: "安装不同主机间用户之间root免密码登陆 passwordless-ssh-login 这个不是必须的,只是为了方便用户使用."
-      include_role:
-         name: passwordless-ssh-login
-      vars:
-        user_host_list: "{{spark_host_list}}"
-        username: "root"
-        password: "{{root_salt_password}}"
-        sudo_privilege: True
-        auto_generate_etc_host_list: False
+## 实例1
+```
+- name: "安装不同主机间用户之间root免密码登陆 passwordless-ssh-login 这个不是必须的,只是为了方便用户使用."
+  include_role:
+     name: passwordless-ssh-login
+  vars:
+    user_host_list: "{{spark_host_list}}"
+    username: "root"
+    password: "{{root_salt_password}}"
+    sudo_privilege: True
+    auto_generate_etc_host_list: False
+```  
       
+## 实例2
+```
+- name: "安装不同主机间用户{{spark_username}}之间免密码登陆 passwordless-ssh-login"
+  include_role:
+     name: passwordless-ssh-login
+  vars:
+    user_host_list: "{{spark_host_list}}"
+    username: "{{spark_username}}"
+    password: "{{spark_salt_password}}"
+    sudo_privilege: True
+    auto_generate_etc_host_list: True
+  become_user: root
       
-##实例2
-    - name: "安装不同主机间用户{{spark_username}}之间免密码登陆 passwordless-ssh-login"
-      include_role:
-         name: passwordless-ssh-login
-      vars:
-        user_host_list: "{{spark_host_list}}"
-        username: "{{spark_username}}"
-        password: "{{spark_salt_password}}"
-        sudo_privilege: True
-        auto_generate_etc_host_list: True
-      become_user: root
-      
-
+```
 
 License
 -------
